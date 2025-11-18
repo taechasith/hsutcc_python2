@@ -1,5 +1,4 @@
-# Virtual environment (created by this project)
-hsenv/
+
 # Specific virtualenv directories (redundant but explicit)
 hsenv/Lib/
 hsenv/Scripts/
