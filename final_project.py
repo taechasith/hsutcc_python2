@@ -14,48 +14,58 @@ class SpermQuantumSimulation:
         self.prob_normal = 0.5
         self.prob_abnormal = 0.5
         self.counts = {}
+        self.selected_file = "Unknown"
 
     def fetch_data(self):
         print(f"--- Fetching Data ---")
         try:
             self.path = kagglehub.dataset_download(self.dataset_handle)
-            print(f"Dataset path: {self.path}")
+            print(f"Dataset downloaded to: {self.path}")
         except Exception as e:
             print(f"Error downloading: {e}")
 
     def calculate_bio_amplitudes(self):
         if not self.path:
-            # Fallback if download fails or isn't run
-            self.prob_normal = 0.52 
-            self.prob_abnormal = 0.48
+            print("No path found. Using default values.")
             return
 
-        label_file = "y_head_train.npy"
-        full_path = os.path.join(self.path, label_file)
+        # --- NEW: Random File Selection Logic ---
+        # 1. Find ALL valid label files (starting with 'y_')
+        label_files = []
+        for root, dirs, files in os.walk(self.path):
+            for file in files:
+                # We only want label files (y_), not image files (x_)
+                if file.startswith("y_") and file.endswith(".npy"):
+                    label_files.append(os.path.join(root, file))
         
-        # Search for file
-        if not os.path.exists(full_path):
-            for root, dirs, files in os.walk(self.path):
-                if label_file in files:
-                    full_path = os.path.join(root, label_file)
-                    break
+        if not label_files:
+            print("No label files (y_*.npy) found!")
+            return
 
+        # 2. Pick one randomly
+        selected_path = random.choice(label_files)
+        self.selected_file = os.path.basename(selected_path)
+        print(f"\n---> RANDOMLY SELECTED FILE: {self.selected_file}")
+
+        # 3. Process the data
         try:
-            print(f"--- Loading Biological Data from {label_file} ---")
-            labels = np.load(full_path)
+            labels = np.load(selected_path)
             total = len(labels)
             abnormal = np.sum(labels)
             normal = total - abnormal
 
             self.prob_normal = normal / total
             self.prob_abnormal = abnormal / total
-            print(f"Bio-probs -> Normal: {self.prob_normal:.2f}, Abnormal: {self.prob_abnormal:.2f}")
+            print(f"Stats -> Normal: {self.prob_normal:.2%}, Abnormal: {self.prob_abnormal:.2%}")
 
         except Exception as e:
-            print(f"Data load error: {e}. Using default values.")
+            print(f"Error reading file: {e}")
 
     def run_simulation(self, shots=1000):
-        alpha = np.sqrt(self.prob_normal)
+        # Prevent math errors if probability is 0
+        if self.prob_normal <= 0: alpha = 0
+        else: alpha = np.sqrt(self.prob_normal)
+        
         theta = 2 * np.arccos(alpha)
         
         qc = QuantumCircuit(1)
@@ -68,88 +78,104 @@ class SpermQuantumSimulation:
         return self.counts
 
 class TurtleHeatmap:
-    """
-    A class to visualize Quantum Data using the Turtle library.
-    It manually constructs a grid 'heatmap' based on probability density.
-    """
     def __init__(self, grid_size=20, cell_size=20):
-        self.grid_size = grid_size  # 20x20 grid = 400 cells
+        self.grid_size = grid_size
         self.cell_size = cell_size
         self.total_cells = grid_size * grid_size
 
-    def draw_cell(self, t, color, x, y):
-        """Helper to draw a single square"""
+    def draw_square(self, t, color, x, y, size):
+        """Helper to draw a filled square at x,y"""
         t.penup()
         t.goto(x, y)
         t.pendown()
-        t.fillcolor(color)
+        t.color("white", color) # White border, filled with 'color'
         t.begin_fill()
         for _ in range(4):
-            t.forward(self.cell_size)
+            t.forward(size)
             t.right(90)
         t.end_fill()
 
-    def visualize(self, counts):
-        print("\n--- Starting Turtle Visualization ---")
-        print("Check your taskbar if a window doesn't appear!")
+    def draw_legend(self, t, x, y):
+        """Draws a professional legend on the side"""
+        # Legend Box
+        t.penup()
+        t.goto(x, y)
+        t.write("LEGEND", align="left", font=("Arial", 12, "bold"))
         
-        # 1. Process Data for the Grid
-        # Calculate how many cells should be Blue (Normal) vs Red (Abnormal)
+        # Item 1: Normal
+        self.draw_square(t, "#00FFFF", x, y - 20, 15) # Cyan hex
+        t.penup()
+        t.goto(x + 25, y - 32)
+        t.write("Normal (|0>)", align="left", font=("Arial", 10, "normal"))
+
+        # Item 2: Abnormal
+        self.draw_square(t, "#FF4444", x, y - 50, 15) # Soft Red hex
+        t.penup()
+        t.goto(x + 25, y - 62)
+        t.write("Abnormal (|1>)", align="left", font=("Arial", 10, "normal"))
+
+    def visualize(self, counts, filename):
+        print("\n--- Generating Heatmap ---")
+        screen = turtle.Screen()
+        screen.setup(width=800, height=600)
+        screen.bgcolor("#222222") # Dark mode background
+        screen.title(f"Quantum Simulation - {filename}")
+        screen.tracer(0) # Turn off animation for instant drawing
+
+        t = turtle.Turtle()
+        t.hideturtle()
+        t.speed(0)
+        t.pencolor("white")
+
+        # 1. Prepare Data
         total_shots = sum(counts.values())
         norm_count = counts.get('0', 0)
         
-        # Scale to our grid size (e.g. 400 cells)
+        # Map quantum results to grid pixels
         num_blue = int((norm_count / total_shots) * self.total_cells)
         num_red = self.total_cells - num_blue
         
-        # Create a list of colors representing the sperm pool
-        # "cyan" for Normal (cool/safe), "red" for Abnormal (hot/warning)
-        color_data = ["cyan"] * num_blue + ["red"] * num_red
-        random.shuffle(color_data) # Shuffle to simulate random distribution in the pool
+        # Color Palette (Hex codes are more professional)
+        colors = ["#00FFFF"] * num_blue + ["#FF4444"] * num_red
+        random.shuffle(colors)
 
-        # 2. Setup Turtle
-        screen = turtle.Screen()
-        screen.title(f"Quantum Sperm Heatmap (N={norm_count} vs Ab={total_shots-norm_count})")
-        screen.bgcolor("black")
-        screen.setup(width=600, height=600)
-        # Turn off tracer for instant drawing (remove this line to see it draw one by one)
-        screen.tracer(0) 
+        # 2. Draw Title
+        t.penup()
+        t.goto(0, 250)
+        t.color("white")
+        t.write(f"Quantum Distribution Map: {filename}", align="center", font=("Verdana", 16, "bold"))
+        t.goto(0, 230)
+        t.write(f"N={total_shots} | Normal: {norm_count} | Abnormal: {total_shots-norm_count}", 
+                align="center", font=("Verdana", 10, "italic"))
 
-        t = turtle.Turtle()
-        t.speed(0)
-        t.hideturtle()
+        # 3. Draw Grid
+        start_x = -200
+        start_y = 200
         
-        # Start position (Top Left)
-        start_x = -(self.grid_size * self.cell_size) / 2
-        start_y = (self.grid_size * self.cell_size) / 2
-
-        # 3. Draw the Grid
         idx = 0
         for row in range(self.grid_size):
             for col in range(self.grid_size):
-                if idx < len(color_data):
+                if idx < len(colors):
                     x_pos = start_x + (col * self.cell_size)
                     y_pos = start_y - (row * self.cell_size)
-                    
-                    self.draw_cell(t, color_data[idx], x_pos, y_pos)
+                    self.draw_square(t, colors[idx], x_pos, y_pos, self.cell_size)
                     idx += 1
-        
-        # Update screen to show drawing
+
+        # 4. Draw Legend (to the right of the grid)
+        self.draw_legend(t, 250, 200)
+
         screen.update()
-        
-        # Keep window open
-        print("Visualization complete. Click the window to exit.")
+        print("Visualization Ready. Click window to exit.")
         screen.exitonclick()
 
-# --- Execution ---
 if __name__ == "__main__":
-    # 1. Run Quantum Simulation
     sim = SpermQuantumSimulation()
     sim.fetch_data()
     sim.calculate_bio_amplitudes()
-    results = sim.run_simulation(shots=1000)
     
-    # 2. Run Turtle Visualization
-    # Note: We scale the heatmap to a 25x25 grid (625 samples) for better visibility
-    viz = TurtleHeatmap(grid_size=25, cell_size=15)
-    viz.visualize(results)
+    # Only run if we actually selected a file
+    if sim.selected_file != "Unknown":
+        results = sim.run_simulation(shots=1000)
+        
+        viz = TurtleHeatmap(grid_size=20, cell_size=20)
+        viz.visualize(results, sim.selected_file)
